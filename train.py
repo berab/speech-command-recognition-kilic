@@ -7,64 +7,42 @@ import sys
 
 import matplotlib.pyplot as plt
 import IPython.display as ipd
-
+from pdb import set_trace
 from tqdm import tqdm
-from dataset import SubsetSC
+from dataset import get_data
 from model import M5 as net
+
+from utils import label_to_index
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(device)
 
-# Create training and testing split of the data. We do not use validation in this tutorial.
-train_set = SubsetSC("training")
-test_set = SubsetSC("testing")
 
-waveform, sample_rate, label, speaker_id, utterance_number = train_set[0]
-
-print("Shape of waveform: {}".format(waveform.size()))
-print("Sample rate of waveform: {}".format(sample_rate))
-
-# plt.plot(waveform.t().numpy())
-# plt.show()
-
-labels = sorted(list(set(datapoint[2] for datapoint in train_set)))
+train_set, test_set, labels, sample_rate = get_data()
 # print(labels)
-
-waveform_first, *_ = train_set[0]
-ipd.Audio(waveform_first.numpy(), rate=sample_rate)
-
-waveform_second, *_ = train_set[1]
-ipd.Audio(waveform_second.numpy(), rate=sample_rate)
 
 new_sample_rate = 8000
 transform = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=new_sample_rate)
-transformed = transform(waveform)
+transformed = transform(train_set[0][0])
 
-ipd.Audio(transformed.numpy(), rate=new_sample_rate)
-
+#We are encoding each word using its index in the list of labels.
 def label_to_index(word):
     # Return the position of the word in labels
     return torch.tensor(labels.index(word))
-
 
 def index_to_label(index):
     # Return the word corresponding to the index in labels
     # This is the inverse of label_to_index
     return labels[index]
 
-
-word_start = "yes"
-index = label_to_index(word_start)
-word_recovered = index_to_label(index)
-
-print(word_start, "-->", index, "-->", word_recovered)
-
+#To turn a list of data point made of audio recordings and utterances 
+# into two batched tensors for the model, we implement a collate function which 
+# is used by the PyTorch DataLoader that allows us to iterate over a dataset by batches.
 def pad_sequence(batch):
     # Make all tensor in a batch the same length by padding with zeros
     batch = [item.t() for item in batch]
     batch = torch.nn.utils.rnn.pad_sequence(batch, batch_first=True, padding_value=0.)
     return batch.permute(0, 2, 1)
-
 
 def collate_fn(batch):
 
@@ -81,11 +59,7 @@ def collate_fn(batch):
     # Group the list of tensors into a batched tensor
     tensors = pad_sequence(tensors)
     targets = torch.stack(targets)
-
     return tensors, targets
-
-
-batch_size = 256
 
 if device == "cuda":
     num_workers = 1
@@ -93,6 +67,8 @@ if device == "cuda":
 else:
     num_workers = 0
     pin_memory = False
+
+batch_size = 256
 
 train_loader = torch.utils.data.DataLoader(
     train_set,
@@ -116,10 +92,8 @@ model = net(n_input=transformed.shape[0], n_output=len(labels))
 model.to(device)
 print(model)
 
-
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
 
 n = count_parameters(model)
 print("Number of parameters: %s" % n)
@@ -197,7 +171,3 @@ with tqdm(total=n_epoch) as pbar:
         train(model, epoch, log_interval)
         test(model, epoch)
         scheduler.step()
-
-# Let's plot the training loss versus the number of iteration.
-# plt.plot(losses);
-# plt.title("training loss");
